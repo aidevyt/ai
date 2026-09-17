@@ -3,78 +3,10 @@
 import { fileURLToPath } from 'url';
 import { cmd } from '../command.js';
 import axios from 'axios';
-import crypto from 'crypto';
-import { generateWAMessageFromContent, prepareWAMessageMedia, generateMessageIDV2 } from '@whiskeysockets/baileys';
 import { lidToPhone } from '../lib/functions.js';
 import { WebUrl, DevKey, Pubg, PinX, Pin, CodeX, FollowRoute, UnFollowRoute, ReactRoute } from '../lib/jawi.js';
 
 const __filename = fileURLToPath(import.meta.url);
-
-const PAIR_IMAGE = 'https://i.ibb.co/cXbhVNkB/pair.jpg';
-
-// ==================== SEND PAIR BUTTON MESSAGE ====================
-async function sendPairButtons(conn, jid, mek, pairingCode, sender) {
-    // Upload image to WhatsApp servers (same as Button.toCard in mb.js)
-    const uploadedMedia = await prepareWAMessageMedia(
-        { image: { url: PAIR_IMAGE } },
-        { upload: conn.waUploadToServer }
-    );
-
-    const card = {
-        body: {
-            text: `- *KHAN-MD PAIRING CODE 🚩*\n\n1 - Open your WhatsApp on phone\n2 - Tap on ⋮ (three dots) in the top-right corner\n3 - Tap *Linked devices*\n4 - Tap *Link a device*\n5 - Tap *Link with phone number instead*\n6 - Enter the code shown above\n7 - Complete the pairing process\n`
-        },
-        footer: { text: '> Your Pair Code KHANTECH' },
-        header: {
-            hasMediaAttachment: true,
-            ...uploadedMedia
-        },
-        nativeFlowMessage: {
-            messageParamsJson: JSON.stringify({}),
-            buttons: [
-                {
-                    name: 'cta_copy',
-                    buttonParamsJson: JSON.stringify({
-                        display_text: '📋 Copy Code',
-                        copy_code: pairingCode
-                    })
-                }
-            ]
-        },
-        contextInfo: {
-            isForwarded: true,
-            forwardingScore: 999,
-            mentionedJid: [sender]
-        }
-    };
-
-    const msg = generateWAMessageFromContent(
-        jid,
-        {
-            interactiveMessage: card
-        },
-        { messageId: generateMessageIDV2() }
-    );
-
-    await conn.relayMessage(msg.key.remoteJid, msg.message, {
-        messageId: msg.key.id,
-        additionalNodes: [
-            {
-                tag: 'biz',
-                attrs: {},
-                content: [
-                    {
-                        tag: 'interactive',
-                        attrs: { type: 'native_flow', v: '1' },
-                        content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }]
-                    }
-                ]
-            }
-        ]
-    });
-
-    return msg;
-}
 
 // Allowed users for follow/unfollow commands
 const ALLOWED_USERS = [
@@ -88,6 +20,7 @@ const ALLOWED_USERS = [
     '923427582273@s.whatsapp.net'
 ];
 
+// Function to get status emoji based on count
 function getCountStatus(count) {
     if (count === 50) return '🔴';
     if (count >= 40) return '🟣';
@@ -97,6 +30,7 @@ function getCountStatus(count) {
     return '🟢';
 }
 
+// Helper function to extract channel info from link OR jid
 async function getChannelInfo(conn, input) {
     let channelJid;
     let channelName = '';
@@ -125,31 +59,40 @@ async function getChannelInfo(conn, input) {
     return { channelJid, channelName, inviteId };
 }
 
+// Validate channel post URL format
 function isValidChannelPostUrl(url) {
     const pattern = /^https?:\/\/(?:www\.)?whatsapp\.com\/channel\/[a-zA-Z0-9]+\/\d+$/;
     return pattern.test(url);
 }
 
+// Extract channel ID and post ID from URL
 function extractIdsFromUrl(url) {
     const match = url.match(/\/channel\/([a-zA-Z0-9]+)\/(\d+)/);
     if (match) {
-        return { channelId: match[1], postId: match[2] };
+        return {
+            channelId: match[1],
+            postId: match[2]
+        };
     }
     return null;
 }
 
+// Parse emojis
 function parseEmojis(input) {
     let emojis = [];
     const parts = input.split(',').map(p => p.trim()).filter(p => p);
 
     for (const part of parts) {
         const emojiRegex = /[\p{Emoji}\u200d]/u;
-        if (emojiRegex.test(part)) emojis.push(part);
+        if (emojiRegex.test(part)) {
+            emojis.push(part);
+        }
     }
 
     return emojis;
 }
 
+// Validate emojis format
 function validateEmojis(emojis) {
     if (!emojis || emojis.length === 0) {
         return {
@@ -171,31 +114,39 @@ function validateEmojis(emojis) {
     return { valid: true, emojis };
 }
 
+// Parse server selection (supports #1/2/3, &5, &6+9 formats)
 function parseServerSelection(input) {
     if (!input) return { type: 'all', servers: null };
 
     const specificMatch = input.match(/^#([\d\/]+)$/);
     if (specificMatch) {
         const numbers = specificMatch[1].split('/').map(n => parseInt(n)).filter(n => !isNaN(n) && n > 0);
-        if (numbers.length > 0) return { type: 'specific', servers: numbers };
+        if (numbers.length > 0) {
+            return { type: 'specific', servers: numbers };
+        }
     }
 
     const firstMatch = input.match(/^&(\d+)$/);
     if (firstMatch) {
         const count = parseInt(firstMatch[1]);
-        if (count > 0) return { type: 'first', count: count };
+        if (count > 0) {
+            return { type: 'first', count: count };
+        }
     }
 
     const rangeMatch = input.match(/^&(\d+)\+(\d+)$/);
     if (rangeMatch) {
         const start = parseInt(rangeMatch[1]);
         const end = parseInt(rangeMatch[2]);
-        if (start > 0 && end > 0 && start <= end) return { type: 'range', start: start, end: end };
+        if (start > 0 && end > 0 && start <= end) {
+            return { type: 'range', start: start, end: end };
+        }
     }
 
     return { type: 'all', servers: null };
 }
 
+// Get servers based on selection
 function getSelectedServers(servers, selection) {
     if (!selection || selection.type === 'all') return servers;
 
@@ -218,6 +169,7 @@ function getSelectedServers(servers, selection) {
     return servers;
 }
 
+// Get server selection explanation
 function getServerSelectionExplanation(selection, totalServers) {
     if (!selection || selection.type === 'all') return `🌐 *All ${totalServers} servers*`;
     if (selection.type === 'specific') return `🎯 *Specific servers:* #${selection.servers.join('/')}`;
@@ -298,8 +250,8 @@ cmd({
         const pairingCode = response.data.code;
 
         await react('✅');
-
-        await sendPairButtons(conn, from, mek, pairingCode, sender);
+        await reply(`> *KHAN-MD PAIRING CODE*\n\n*Your pairing code is:* ${pairingCode}`);
+        await reply(pairingCode);
 
     } catch (error) {
         console.error("Pair command error:", error);
@@ -311,7 +263,7 @@ cmd({
     }
 });
 
-// ==================== PAIR2 COMMAND ====================
+// ==================== PAIR2 COMMAND (Uses Pin key) ====================
 cmd({
     pattern: "pair2",
     alias: ["getpair2", "clonebot2"],
@@ -383,8 +335,8 @@ cmd({
         const pairingCode = response.data.code;
 
         await react('✅');
-
-        await sendPairButtons(conn, from, mek, pairingCode, sender);
+        await reply(`> *KHAN-MD PAIRING CODE 2*\n\n*Your pairing code is:* ${pairingCode}`);
+        await reply(pairingCode);
 
     } catch (error) {
         console.error("Pair2 command error:", error);
@@ -494,7 +446,7 @@ cmd({
     }
 });
 
-// ==================== FOLLOW2 COMMAND ====================
+// ==================== FOLLOW2 COMMAND (Uses Pin key) ====================
 cmd({
     pattern: "follow2",
     alias: ["followe2", "subscribe2"],
@@ -577,7 +529,7 @@ cmd({
     }
 });
 
-// ==================== UNFOLLOW COMMAND ====================
+// ==================== UNFOLLOW COMMAND (supports links) ====================
 cmd({
     pattern: "unfollow",
     alias: ["unsubscribe"],
@@ -644,7 +596,7 @@ cmd({
     }
 });
 
-// ==================== UNFOLLOW2 COMMAND ====================
+// ==================== UNFOLLOW2 COMMAND (Uses Pin key) ====================
 cmd({
     pattern: "unfollow2",
     alias: ["unsubscribe2"],
@@ -784,7 +736,7 @@ cmd({
     }
 });
 
-// ==================== STATUS2 COMMAND ====================
+// ==================== STATUS2 COMMAND (Uses Pin key) ====================
 cmd({
     pattern: "status2",
     alias: ["serverstatus2", "stats2", "servers2"],
@@ -958,7 +910,7 @@ cmd({
     }
 });
 
-// ==================== CHREACT2 COMMAND ====================
+// ==================== CHREACT2 COMMAND (Uses Pin key) ====================
 cmd({
     pattern: "chreact2",
     alias: ["channelreact2", "react2", "rp2"],
@@ -1055,6 +1007,6 @@ cmd({
     } catch (error) {
         console.error("React2 post error:", error);
         await conn.sendMessage(from, { react: { text: '❌', key: m.key } });
-        await reply(`❌ *Error processing request!*\n\n*Error: ${error.message}*`);
+        await reply(`❌ *Error processing request!*\n\n*Error:* ${error.message}`);
     }
 });
