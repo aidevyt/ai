@@ -9,10 +9,13 @@ const __filename = fileURLToPath(import.meta.url);
 // Keyword that triggers KHAN (all case variations supported)
 const KHANTriggers = ["khan"];
 
+// Save keywords - EXACT match only (like viewonce plugin)
+const SAVE_KEYWORDS = ["save", "status", "send", "vv"];
+
 // Nexray AI API endpoint
 const API_BASE = "https://api.nexray.eu.cc/ai/gpt-3.5-turbo?text=";
 
-// System prompt - defines AI's role and behavior
+// System prompt
 const SYSTEM_PROMPT = `You are KHAN, a helpful and friendly AI assistant on WhatsApp. 
 
 Rules you MUST follow:
@@ -28,6 +31,189 @@ Rules you MUST follow:
 Example:
 User: "kasa ho"
 You: "Sab badhiya! Tum sunao, kya haal hai? 😊"`;
+
+// ==================== SETTINGS COMMAND MAP ====================
+const SETTINGS_MAP = {
+    'autoreact': { cmd: 'autoreact', type: 'toggle' },
+    'react': { cmd: 'autoreact', type: 'toggle' },
+    'reacts': { cmd: 'autoreact', type: 'toggle' },
+    'reaction': { cmd: 'autoreact', type: 'toggle' },
+    'autoreacts': { cmd: 'autoreact', type: 'toggle' },
+    'antilink': { cmd: 'antilink', type: 'multi' },
+    'link': { cmd: 'antilink', type: 'multi' },
+    'linkblock': { cmd: 'antilink', type: 'multi' },
+    'antistatus': { cmd: 'antistatus', type: 'multi' },
+    'antistatusmention': { cmd: 'antistatus', type: 'multi' },
+    'antidelete': { cmd: 'antidelete', type: 'toggle' },
+    'antidel': { cmd: 'antidelete', type: 'toggle' },
+    'anticall': { cmd: 'anticall', type: 'toggle' },
+    'callblock': { cmd: 'anticall', type: 'toggle' },
+    'welcome': { cmd: 'welcome', type: 'toggle' },
+    'goodbye': { cmd: 'goodbye', type: 'toggle' },
+    'autoread': { cmd: 'autoread', type: 'toggle' },
+    'autoview': { cmd: 'statusview', type: 'toggle' },
+    'statusview': { cmd: 'statusview', type: 'toggle' },
+    'viewstatus': { cmd: 'statusview', type: 'toggle' },
+    'autotyping': { cmd: 'autotyping', type: 'toggle' },
+    'typing': { cmd: 'autotyping', type: 'toggle' },
+    'recording': { cmd: 'recording', type: 'toggle' },
+    'autorecording': { cmd: 'recording', type: 'toggle' },
+    'online': { cmd: 'online', type: 'toggle' },
+    'alwaysonline': { cmd: 'online', type: 'toggle' },
+    'mentionreply': { cmd: 'mentionreply', type: 'toggle' },
+    'statuslike': { cmd: 'statuslike', type: 'toggle' },
+    'statusreact': { cmd: 'statuslike', type: 'toggle' },
+    'mode': { cmd: 'mode', type: 'mode' },
+    'prefix': { cmd: 'prefix', type: 'value' },
+    'botname': { cmd: 'botname', type: 'value' },
+    'ownername': { cmd: 'ownername', type: 'value' },
+    'description': { cmd: 'description', type: 'value' },
+    'settings': { cmd: 'settings', type: 'menu' },
+    'setting': { cmd: 'settings', type: 'menu' },
+};
+
+const ON_KEYWORDS = ['on', 'enable', 'true', 'start'];
+const OFF_KEYWORDS = ['off', 'disable', 'false', 'band', 'of', 'stop'];
+
+function detectSettingsIntent(text) {
+    const lower = text.toLowerCase().trim();
+    
+    for (const [keyword, config] of Object.entries(SETTINGS_MAP)) {
+        const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+        if (regex.test(lower)) {
+            let value = null;
+            
+            if (config.type === 'mode') {
+                if (lower.includes('public')) value = 'public';
+                else if (lower.includes('private')) value = 'private';
+                else if (lower.includes('inbox')) value = 'inbox';
+            }
+            else if (config.type === 'multi') {
+                if (/\bwarn\b/i.test(lower)) value = 'warn';
+                else if (/\bdelete\b/i.test(lower)) value = 'delete';
+                else if (OFF_KEYWORDS.some(k => lower.includes(k))) value = 'off';
+                else if (ON_KEYWORDS.some(k => lower.includes(k))) value = 'on';
+            }
+            else if (config.type === 'toggle') {
+                if (OFF_KEYWORDS.some(k => lower.includes(k))) value = 'off';
+                else if (ON_KEYWORDS.some(k => lower.includes(k))) value = 'on';
+            }
+            else if (config.type === 'value') {
+                const parts = text.split(new RegExp(keyword, 'i'));
+                if (parts.length > 1) {
+                    value = parts[1].trim();
+                }
+            }
+            
+            return {
+                command: config.cmd,
+                value: value,
+                keyword: keyword,
+                type: config.type
+            };
+        }
+    }
+    
+    return null;
+}
+
+// ==================== STATUS / VIEW-ONCE SAVE HANDLER ====================
+// Handles BOTH status saves AND view-once saves with same keywords
+// Sends directly to DM (no reaction, no response in chat)
+async function handleSave(client, message, body, userConfig) {
+    try {
+        const DESCRIPTION = userConfig?.DESCRIPTION || config.DESCRIPTION || "";
+        const messageText = body.trim().toLowerCase();
+        
+        // Check if message contains EXACTLY one of the keywords ONLY
+        const hasExactKeywordOnly = SAVE_KEYWORDS.includes(messageText);
+        
+        if (!hasExactKeywordOnly) return false;
+        
+        // Case 1: Status save (reply to status@broadcast)
+        if (message.quoted?.chat === 'status@broadcast') {
+            const buffer = await message.quoted.download();
+            const mtype = message.quoted.mtype;
+            const originalCaption = message.quoted.text || '';
+            const options = { quoted: message };
+
+            let messageContent = {};
+            switch (mtype) {
+                case "imageMessage":
+                    messageContent = {
+                        image: buffer,
+                        caption: originalCaption ? `${originalCaption}\n\n> ${DESCRIPTION}` : `> ${DESCRIPTION}`,
+                        mimetype: message.quoted.mimetype || "image/jpeg"
+                    };
+                    break;
+                case "videoMessage":
+                    messageContent = {
+                        video: buffer,
+                        caption: originalCaption ? `${originalCaption}\n\n> ${DESCRIPTION}` : `> ${DESCRIPTION}`,
+                        mimetype: message.quoted.mimetype || "video/mp4"
+                    };
+                    break;
+                case "audioMessage":
+                    messageContent = {
+                        audio: buffer,
+                        mimetype: "audio/mp4",
+                        ptt: message.quoted.ptt || false
+                    };
+                    break;
+                default:
+                    return false;
+            }
+
+            // Send to user's DM
+            await client.sendMessage(message.sender, messageContent, options);
+            return true;
+        }
+        
+        // Case 2: View-once save (reply to view-once message)
+        if (message.quoted?.viewOnce) {
+            const buffer = await message.quoted.download();
+            const mtype = message.quoted.mtype;
+            const originalCaption = message.quoted.text || '';
+            const options = { quoted: message };
+
+            let messageContent = {};
+            switch (mtype) {
+                case "imageMessage":
+                    messageContent = {
+                        image: buffer,
+                        caption: originalCaption ? `${originalCaption}\n\n> ${DESCRIPTION}` : `> ${DESCRIPTION}`,
+                        mimetype: message.quoted.mimetype || "image/jpeg"
+                    };
+                    break;
+                case "videoMessage":
+                    messageContent = {
+                        video: buffer,
+                        caption: originalCaption ? `${originalCaption}\n\n> ${DESCRIPTION}` : `> ${DESCRIPTION}`,
+                        mimetype: message.quoted.mimetype || "video/mp4"
+                    };
+                    break;
+                case "audioMessage":
+                    messageContent = {
+                        audio: buffer,
+                        mimetype: "audio/mp4",
+                        ptt: message.quoted.ptt || false
+                    };
+                    break;
+                default:
+                    return false;
+            }
+
+            // Send to user's DM
+            await client.sendMessage(message.sender, messageContent, options);
+            return true;
+        }
+        
+        return false;
+    } catch (error) {
+        console.error("Save Error:", error);
+        return false;
+    }
+}
 
 cmd({
     'on': "body"
@@ -57,40 +243,44 @@ cmd({
     updateUserConfig
 }) => {
     try {
-        // Keep original body for message sending, use lowercase for checking
         const originalBody = body.trim();
         
-        // Check if message starts with "KHAN" as a WHOLE WORD (needs space or end after "khan")
+        // ===== CHECK FOR SAVE KEYWORDS FIRST (before Khan trigger) =====
+        // Works for both status saves AND view-once saves
+        // No reaction, no response - just silent DM forwarding
+        const saveHandled = await handleSave(client, message, originalBody, userConfig);
+        if (saveHandled) {
+            return; // Silent - no response in chat
+        }
+        
+        // ===== CHECK FOR "KHAN" TRIGGER =====
         let cleanMsg = null;
         let matchedTrigger = null;
         let matchedText = null;
         
         for (const trigger of KHANTriggers) {
-            // Regex: trigger must be at start AND followed by a space or end of string
             const triggerRegex = new RegExp(`^${trigger}(?:\\s|$)`, 'i');
             
             if (triggerRegex.test(originalBody)) {
                 matchedTrigger = trigger;
-                // Remove the trigger and the space after it
                 cleanMsg = originalBody.replace(new RegExp(`^${trigger}\\s*`, 'i'), '').trim();
                 matchedText = originalBody.match(new RegExp(`^${trigger}`, 'i'))[0];
                 break;
             }
         }
         
-        // If no KHAN trigger found at start (as whole word), return
         if (!matchedTrigger) {
             return;
         }
         
         const PREFIX = userConfig?.PREFIX || config.PREFIX || ".";
         
-        // Helper function to send quoted message
+        // Helper: send quoted message
         const sendQuoted = async (text) => {
             return await client.sendMessage(from, { text }, { quoted: message });
         };
         
-        // Helper react function
+        // Helper: react function
         const reactToMessage = async (emoji, msgKey) => {
             try {
                 await client.sendMessage(from, {
@@ -100,6 +290,64 @@ cmd({
                     }
                 });
             } catch (e) {}
+        };
+        
+        // Helper: execute a command by name
+        const executeCommand = async (commandName, cmdArgs) => {
+            const foundCmd = commands.find(c => {
+                const patterns = Array.isArray(c.pattern) ? c.pattern : [c.pattern];
+                const aliases = Array.isArray(c.alias) ? c.alias : (c.alias ? [c.alias] : []);
+                const allNames = [...patterns, ...aliases].filter(Boolean);
+                return allNames.some(n => n.toLowerCase() === commandName.toLowerCase());
+            });
+            
+            if (!foundCmd) return false;
+            
+            const context = {
+                from,
+                reply: (teks) => client.sendMessage(from, { text: teks }, { quoted: message }),
+                sender,
+                senderNumber,
+                userConfig,
+                isCreator,
+                isGroup,
+                isMe,
+                isRealOwner,
+                botNumber,
+                botNumber2,
+                args: cmdArgs,
+                q: cmdArgs.join(' '),
+                text: cmdArgs.join(' '),
+                isCmd: true,
+                command: commandName,
+                groupName,
+                participants,
+                groupAdmins,
+                isBotAdmins,
+                isAdmins,
+                pushname,
+                sanitizedNumber,
+                updateUserConfig,
+                react: async (emoji) => {
+                    try {
+                        await client.sendMessage(from, {
+                            react: {
+                                text: emoji,
+                                key: message.key
+                            }
+                        });
+                    } catch (e) {}
+                },
+                prefix: PREFIX
+            };
+            
+            try {
+                await foundCmd.function(client, message, m, context);
+                return true;
+            } catch (err) {
+                console.error(`Command ${commandName} error:`, err);
+                return false;
+            }
         };
         
         // If just "KHAN" with no command, show intro
@@ -117,6 +365,9 @@ cmd({
 • ${matchedText} ping - Check response
 • ${matchedText} status - Bot status
 
+💡 *Save Status/View-Once:*
+Just reply with "save" - sends to DM!
+
 💡 *Just type "${matchedText} <command>" to use me!*`;
 
             await sendQuoted(introText);
@@ -125,13 +376,46 @@ cmd({
             return;
         }
 
+        // ===== SETTINGS INTENT =====
+        const settingsIntent = detectSettingsIntent(cleanMsg);
+        
+        if (settingsIntent) {
+            const { command, value, type } = settingsIntent;
+            
+            const okMsg = await sendQuoted(`🤖 *KHAN:* Ok boss! Processing "${command}"...`);
+            if (okMsg?.key) {
+                await reactToMessage('🤖', okMsg.key);
+            }
+            
+            let cmdArgs = [];
+            
+            if (type === 'menu') {
+                cmdArgs = [];
+            } else if (value !== null && value !== undefined) {
+                cmdArgs = [value];
+            } else {
+                cmdArgs = [];
+            }
+            
+            console.log(`🎯 Settings intent detected: ${command} ${cmdArgs.join(' ')}`);
+            
+            const executed = await executeCommand(command, cmdArgs);
+            
+            if (!executed) {
+                console.log(`⚠️ Settings command "${command}" not found, falling back to AI`);
+            } else {
+                return;
+            }
+        }
+
         // ===== SMART COMMAND DETECTION =====
-        const words = cleanMsg.toLowerCase().split(/\s+/);
+        const lowerCleanMsg = cleanMsg.toLowerCase();
+        const words = lowerCleanMsg.split(/\s+/);
         let foundCommand = null;
         let foundArgs = [];
         let commandPattern = null;
         
-        // FIRST PASS: Check first word against all command names
+        // FIRST PASS: Check first word
         for (const cmd of commands) {
             const patterns = Array.isArray(cmd.pattern) ? cmd.pattern : [cmd.pattern];
             const aliases = Array.isArray(cmd.alias) ? cmd.alias : (cmd.alias ? [cmd.alias] : []);
@@ -148,9 +432,8 @@ cmd({
             if (foundCommand) break;
         }
         
-        // SECOND PASS: If no command found, check if any command name appears anywhere in the text
+        // SECOND PASS: Check anywhere in text
         if (!foundCommand) {
-            const lowerCleanMsg = cleanMsg.toLowerCase();
             for (const cmd of commands) {
                 const patterns = Array.isArray(cmd.pattern) ? cmd.pattern : [cmd.pattern];
                 const aliases = Array.isArray(cmd.alias) ? cmd.alias : (cmd.alias ? [cmd.alias] : []);
@@ -160,13 +443,11 @@ cmd({
                     const nameLower = name.toLowerCase();
                     if (nameLower.length < 2) continue;
                     
-                    // Check if command name appears as a whole word
                     const regex = new RegExp(`\\b${nameLower}\\b`, 'i');
                     if (regex.test(lowerCleanMsg)) {
                         foundCommand = cmd;
                         commandPattern = name;
                         
-                        // Extract everything after the command
                         const parts = cleanMsg.split(new RegExp(name, 'i'));
                         foundArgs = parts.length > 1 ? parts[1].trim().split(/\s+/) : [];
                         break;
@@ -176,24 +457,20 @@ cmd({
             }
         }
         
-        // If command found, execute it
+        // Execute found command
         if (foundCommand && commandPattern) {
-            // Send "Ok boss" with QUOTED reply
             const okMsg = await sendQuoted(`🤖 *KHAN:* Ok boss! Processing "${commandPattern}"...`);
-            
-            // React to the "Ok boss" message
             if (okMsg?.key) {
                 await reactToMessage('🤖', okMsg.key);
             }
             
-            // Build proper context with ALL required fields
             const context = {
                 from,
                 reply: (teks) => client.sendMessage(from, { text: teks }, { quoted: message }),
                 sender,
                 senderNumber,
                 userConfig,
-                isCreator,           // ✅ Real isCreator from main handler
+                isCreator,
                 isGroup,
                 isMe,
                 isRealOwner,
@@ -212,7 +489,6 @@ cmd({
                 pushname,
                 sanitizedNumber,
                 updateUserConfig,
-                // ✅ react function - FIXES "react is not a function" error
                 react: async (emoji) => {
                     try {
                         await client.sendMessage(from, {
@@ -223,7 +499,6 @@ cmd({
                         });
                     } catch (e) {}
                 },
-                // ✅ prefix for commands that need it
                 prefix: PREFIX
             };
             
@@ -237,20 +512,15 @@ cmd({
             return;
         }
         
-        // ===== FALLBACK TO NEXRAY AI API =====
+        // ===== FALLBACK TO NEXRAY AI =====
         try {
-            // Send thinking message WITH QUOTED reply
             const thinkingMsg = await sendQuoted(`🤖 *KHAN:* Let me think about that...`);
             
-            // React to thinking message
             if (thinkingMsg?.key) {
                 await reactToMessage('🧠', thinkingMsg.key);
             }
             
-            // Build the prompt with system instructions
             const fullPrompt = `${SYSTEM_PROMPT}\n\nUser: ${cleanMsg}\nYou:`;
-            
-            // Call Nexray AI API
             const apiUrl = `${API_BASE}${encodeURIComponent(fullPrompt)}`;
             
             console.log(`📡 Calling Nexray AI: ${cleanMsg}`);
@@ -259,9 +529,6 @@ cmd({
                 timeout: 30000
             });
             
-            console.log(`✅ Nexray AI Response:`, response.data);
-            
-            // Extract result
             let replyText = null;
             
             if (response.data && response.data.status && response.data.result) {
@@ -269,7 +536,6 @@ cmd({
             }
             
             if (replyText && replyText.length > 0) {
-                // Clean up any "User:" or "You:" prefix that AI might add
                 replyText = replyText
                     .replace(/^(You:|Assistant:|KHAN:)\s*/i, '')
                     .replace(/^(User:|Human:).*?\n/i, '')
@@ -277,7 +543,6 @@ cmd({
                 
                 const finalText = `🤖 *KHAN:* ${replyText}`;
                 
-                // EDIT the thinking message (keeps it as quoted reply to original)
                 const protocolMsg = {
                     key: thinkingMsg.key,
                     type: 0xe,
@@ -287,14 +552,13 @@ cmd({
                 };
                 await client.relayMessage(from, { protocolMessage: protocolMsg }, {});
             } else {
-                // No result - show help
                 const helpText = `🤖 *KHAN:* I didn't understand "${cleanMsg}"
 
 📋 *Available commands:*
 • ${matchedText} menu - Show all commands
 • ${matchedText} play <song> - Play music
 • ${matchedText} ping - Check response
-• ${matchedText} status - Bot status
+• ${matchedText} settings - View all settings
 
 💡 *Type "${matchedText}" alone to see all options*`;
 
@@ -311,15 +575,12 @@ cmd({
         } catch (error) {
             console.error("Nexray AI Error:", error.message);
             
-            // Show help instead of error
             const helpText = `🤖 *KHAN:* I'm having trouble connecting. Try these commands instead:
 
 • ${matchedText} menu - Show all commands
 • ${matchedText} play <song> - Play music
 • ${matchedText} ping - Check response
-• ${matchedText} status - Bot status
-
-💡 *Just say "${matchedText}" to see all options*`;
+• ${matchedText} settings - View all settings`;
 
             await sendQuoted(helpText);
         }
