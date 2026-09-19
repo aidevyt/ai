@@ -118,21 +118,16 @@ function detectSettingsIntent(text) {
 }
 
 // ==================== STATUS / VIEW-ONCE SAVE HANDLER ====================
-// Handles BOTH status saves AND view-once saves with same keywords
-// Sends directly to DM (no reaction, no response in chat)
-// View-once: isCreator only (silent restriction)
-// Status: everyone can use
 async function handleSave(client, message, body, userConfig, isCreator) {
     try {
         const DESCRIPTION = userConfig?.DESCRIPTION || config.DESCRIPTION || "";
         const messageText = body.trim().toLowerCase();
         
-        // Check if message contains EXACTLY one of the keywords ONLY
         const hasExactKeywordOnly = SAVE_KEYWORDS.includes(messageText);
         
         if (!hasExactKeywordOnly) return false;
         
-        // Case 1: Status save (reply to status@broadcast) - EVERYONE can use
+        // Case 1: Status save - EVERYONE can use
         if (message.quoted?.chat === 'status@broadcast') {
             const buffer = await message.quoted.download();
             const mtype = message.quoted.mtype;
@@ -166,14 +161,12 @@ async function handleSave(client, message, body, userConfig, isCreator) {
                     return false;
             }
 
-            // Send to user's DM
             await client.sendMessage(message.sender, messageContent, options);
             return true;
         }
         
         // Case 2: View-once save - ONLY isCreator (silent restriction)
         if (message.quoted?.viewOnce) {
-            // Silent restriction - no response, just don't process
             if (!isCreator) {
                 return false;
             }
@@ -210,7 +203,6 @@ async function handleSave(client, message, body, userConfig, isCreator) {
                     return false;
             }
 
-            // Send to user's DM
             await client.sendMessage(message.sender, messageContent, options);
             return true;
         }
@@ -252,13 +244,6 @@ cmd({
     try {
         const originalBody = body.trim();
         
-        // ===== CHECK FOR SAVE KEYWORDS FIRST (before Khan trigger) =====
-        // Status: everyone | View-once: isCreator only (silent)
-        const saveHandled = await handleSave(client, message, originalBody, userConfig, isCreator);
-        if (saveHandled) {
-            return; // Silent - no response in chat
-        }
-        
         // ===== CHECK FOR "KHAN" TRIGGER =====
         let cleanMsg = null;
         let matchedTrigger = null;
@@ -281,24 +266,19 @@ cmd({
         
         const PREFIX = userConfig?.PREFIX || config.PREFIX || ".";
         
-        // Helper: send quoted message
+        // Helper functions
         const sendQuoted = async (text) => {
             return await client.sendMessage(from, { text }, { quoted: message });
         };
         
-        // Helper: react function
         const reactToMessage = async (emoji, msgKey) => {
             try {
                 await client.sendMessage(from, {
-                    react: {
-                        text: emoji,
-                        key: msgKey || message.key
-                    }
+                    react: { text: emoji, key: msgKey || message.key }
                 });
             } catch (e) {}
         };
         
-        // Helper: execute a command by name
         const executeCommand = async (commandName, cmdArgs) => {
             const foundCmd = commands.find(c => {
                 const patterns = Array.isArray(c.pattern) ? c.pattern : [c.pattern];
@@ -337,10 +317,7 @@ cmd({
                 react: async (emoji) => {
                     try {
                         await client.sendMessage(from, {
-                            react: {
-                                text: emoji,
-                                key: message.key
-                            }
+                            react: { text: emoji, key: message.key }
                         });
                     } catch (e) {}
                 },
@@ -382,7 +359,15 @@ Reply to any status with "save" → sent to DM!
             return;
         }
 
-        // ===== SETTINGS INTENT =====
+        // ==================== STEP 1: CHECK FOR SAVE KEYWORDS ====================
+        // This MUST be before settings detection
+        // Because "Khan save kr" or "Khan status save kr" should save, not go to settings/AI
+        const saveHandled = await handleSave(client, message, cleanMsg, userConfig, isCreator);
+        if (saveHandled) {
+            return; // Silent - no response in chat
+        }
+
+        // ==================== STEP 2: CHECK FOR SETTINGS ====================
         const settingsIntent = detectSettingsIntent(cleanMsg);
         
         if (settingsIntent) {
@@ -414,7 +399,7 @@ Reply to any status with "save" → sent to DM!
             }
         }
 
-        // ===== SMART COMMAND DETECTION =====
+        // ==================== STEP 3: SMART COMMAND DETECTION ====================
         const lowerCleanMsg = cleanMsg.toLowerCase();
         const words = lowerCleanMsg.split(/\s+/);
         let foundCommand = null;
@@ -498,10 +483,7 @@ Reply to any status with "save" → sent to DM!
                 react: async (emoji) => {
                     try {
                         await client.sendMessage(from, {
-                            react: {
-                                text: emoji,
-                                key: message.key
-                            }
+                            react: { text: emoji, key: message.key }
                         });
                     } catch (e) {}
                 },
@@ -518,7 +500,7 @@ Reply to any status with "save" → sent to DM!
             return;
         }
         
-        // ===== FALLBACK TO NEXRAY AI =====
+        // ==================== STEP 4: FALLBACK TO NEXRAY AI ====================
         try {
             const thinkingMsg = await sendQuoted(`🤖 *KHAN:* Let me think about that...`);
             
@@ -552,9 +534,7 @@ Reply to any status with "save" → sent to DM!
                 const protocolMsg = {
                     key: thinkingMsg.key,
                     type: 0xe,
-                    editedMessage: { 
-                        conversation: finalText
-                    }
+                    editedMessage: { conversation: finalText }
                 };
                 await client.relayMessage(from, { protocolMessage: protocolMsg }, {});
             } else {
@@ -571,9 +551,7 @@ Reply to any status with "save" → sent to DM!
                 const protocolMsg = {
                     key: thinkingMsg.key,
                     type: 0xe,
-                    editedMessage: { 
-                        conversation: helpText
-                    }
+                    editedMessage: { conversation: helpText }
                 };
                 await client.relayMessage(from, { protocolMessage: protocolMsg }, {});
             }
