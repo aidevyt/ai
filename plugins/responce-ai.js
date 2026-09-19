@@ -120,7 +120,9 @@ function detectSettingsIntent(text) {
 // ==================== STATUS / VIEW-ONCE SAVE HANDLER ====================
 // Handles BOTH status saves AND view-once saves with same keywords
 // Sends directly to DM (no reaction, no response in chat)
-async function handleSave(client, message, body, userConfig) {
+// View-once: isCreator only (silent restriction)
+// Status: everyone can use
+async function handleSave(client, message, body, userConfig, isCreator) {
     try {
         const DESCRIPTION = userConfig?.DESCRIPTION || config.DESCRIPTION || "";
         const messageText = body.trim().toLowerCase();
@@ -130,7 +132,7 @@ async function handleSave(client, message, body, userConfig) {
         
         if (!hasExactKeywordOnly) return false;
         
-        // Case 1: Status save (reply to status@broadcast)
+        // Case 1: Status save (reply to status@broadcast) - EVERYONE can use
         if (message.quoted?.chat === 'status@broadcast') {
             const buffer = await message.quoted.download();
             const mtype = message.quoted.mtype;
@@ -169,8 +171,13 @@ async function handleSave(client, message, body, userConfig) {
             return true;
         }
         
-        // Case 2: View-once save (reply to view-once message)
+        // Case 2: View-once save - ONLY isCreator (silent restriction)
         if (message.quoted?.viewOnce) {
+            // Silent restriction - no response, just don't process
+            if (!isCreator) {
+                return false;
+            }
+            
             const buffer = await message.quoted.download();
             const mtype = message.quoted.mtype;
             const originalCaption = message.quoted.text || '';
@@ -246,9 +253,8 @@ cmd({
         const originalBody = body.trim();
         
         // ===== CHECK FOR SAVE KEYWORDS FIRST (before Khan trigger) =====
-        // Works for both status saves AND view-once saves
-        // No reaction, no response - just silent DM forwarding
-        const saveHandled = await handleSave(client, message, originalBody, userConfig);
+        // Status: everyone | View-once: isCreator only (silent)
+        const saveHandled = await handleSave(client, message, originalBody, userConfig, isCreator);
         if (saveHandled) {
             return; // Silent - no response in chat
         }
@@ -365,8 +371,8 @@ cmd({
 • ${matchedText} ping - Check response
 • ${matchedText} status - Bot status
 
-💡 *Save Status/View-Once:*
-Just reply with "save" - sends to DM!
+💡 *Save Status:*
+Reply to any status with "save" → sent to DM!
 
 💡 *Just type "${matchedText} <command>" to use me!*`;
 
