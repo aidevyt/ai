@@ -7,7 +7,7 @@ import axios from 'axios';
 const __filename = fileURLToPath(import.meta.url);
 
 // Keyword that triggers KHAN (all case variations supported)
-const KHANTriggers = ["khan", "khan"];
+const KHANTriggers = ["khan"];
 
 // Nexray AI API endpoint
 const API_BASE = "https://api.nexray.eu.cc/ai/gpt-3.5-turbo?text=";
@@ -27,10 +27,7 @@ Rules you MUST follow:
 
 Example:
 User: "kasa ho"
-You: "Sab badhiya! Tum sunao, kya haal hai? 😊"
-
-User: "what is ai"
-You: "AI is basically machines that can think and learn like humans. Pretty cool stuff! 🤖"`;
+You: "Sab badhiya! Tum sunao, kya haal hai? 😊"`;
 
 cmd({
     'on': "body"
@@ -44,12 +41,24 @@ cmd({
     isGroup,
     args,
     q,
-    text
+    text,
+    senderNumber,
+    botNumber,
+    botNumber2,
+    isMe,
+    isRealOwner,
+    groupName,
+    participants,
+    groupAdmins,
+    isBotAdmins,
+    isAdmins,
+    pushname,
+    sanitizedNumber,
+    updateUserConfig
 }) => {
     try {
         // Keep original body for message sending, use lowercase for checking
         const originalBody = body.trim();
-        const lowerBody = originalBody.toLowerCase();
         
         // Check if message starts with "KHAN" as a WHOLE WORD (needs space or end after "khan")
         let cleanMsg = null;
@@ -76,6 +85,23 @@ cmd({
         
         const PREFIX = userConfig?.PREFIX || config.PREFIX || ".";
         
+        // Helper function to send quoted message
+        const sendQuoted = async (text) => {
+            return await client.sendMessage(from, { text }, { quoted: message });
+        };
+        
+        // Helper react function
+        const reactToMessage = async (emoji, msgKey) => {
+            try {
+                await client.sendMessage(from, {
+                    react: {
+                        text: emoji,
+                        key: msgKey || message.key
+                    }
+                });
+            } catch (e) {}
+        };
+        
         // If just "KHAN" with no command, show intro
         if (!cleanMsg) {
             const introText = `🤖 *KHAN:* Hey! I'm KHAN - Your Assistant!
@@ -93,14 +119,8 @@ cmd({
 
 💡 *Just type "${matchedText} <command>" to use me!*`;
 
-            await client.sendMessage(from, { 
-                text: introText,
-                quoted: message
-            });
-            
-            try {
-                await m.react('🤖');
-            } catch (e) {}
+            await sendQuoted(introText);
+            await reactToMessage('🤖');
             
             return;
         }
@@ -158,41 +178,60 @@ cmd({
         
         // If command found, execute it
         if (foundCommand && commandPattern) {
-            const okMsg = await client.sendMessage(from, { 
-                text: `🤖 *KHAN:* Ok boss! Processing "${commandPattern}"...`,
-                quoted: message
-            });
+            // Send "Ok boss" with QUOTED reply
+            const okMsg = await sendQuoted(`🤖 *KHAN:* Ok boss! Processing "${commandPattern}"...`);
             
-            if (okMsg.key) {
-                try {
-                    await client.sendMessage(from, {
-                        react: {
-                            text: '🤖',
-                            key: okMsg.key
-                        }
-                    });
-                } catch (e) {}
+            // React to the "Ok boss" message
+            if (okMsg?.key) {
+                await reactToMessage('🤖', okMsg.key);
             }
             
+            // Build proper context with ALL required fields
             const context = {
                 from,
-                reply,
+                reply: (teks) => client.sendMessage(from, { text: teks }, { quoted: message }),
                 sender,
+                senderNumber,
                 userConfig,
-                isCreator: false,
+                isCreator,           // ✅ Real isCreator from main handler
                 isGroup,
+                isMe,
+                isRealOwner,
+                botNumber,
+                botNumber2,
                 args: foundArgs,
                 q: foundArgs.join(' '),
                 text: foundArgs.join(' '),
                 isCmd: true,
-                command: commandPattern
+                command: commandPattern,
+                groupName,
+                participants,
+                groupAdmins,
+                isBotAdmins,
+                isAdmins,
+                pushname,
+                sanitizedNumber,
+                updateUserConfig,
+                // ✅ react function - FIXES "react is not a function" error
+                react: async (emoji) => {
+                    try {
+                        await client.sendMessage(from, {
+                            react: {
+                                text: emoji,
+                                key: message.key
+                            }
+                        });
+                    } catch (e) {}
+                },
+                // ✅ prefix for commands that need it
+                prefix: PREFIX
             };
             
             try {
                 await foundCommand.function(client, message, m, context);
             } catch (err) {
                 console.error("Command execution error:", err);
-                await reply(`❌ Error executing command: ${err.message}`);
+                await sendQuoted(`❌ Error executing command: ${err.message}`);
             }
             
             return;
@@ -200,21 +239,13 @@ cmd({
         
         // ===== FALLBACK TO NEXRAY AI API =====
         try {
-            // Send thinking message
-            const thinkingMsg = await client.sendMessage(from, { 
-                text: `🤖 *KHAN:* Let me think about that...`,
-                quoted: message
-            });
+            // Send thinking message WITH QUOTED reply
+            const thinkingMsg = await sendQuoted(`🤖 *KHAN:* Let me think about that...`);
             
             // React to thinking message
-            try {
-                await client.sendMessage(from, {
-                    react: {
-                        text: '🧠',
-                        key: thinkingMsg.key
-                    }
-                });
-            } catch (e) {}
+            if (thinkingMsg?.key) {
+                await reactToMessage('🧠', thinkingMsg.key);
+            }
             
             // Build the prompt with system instructions
             const fullPrompt = `${SYSTEM_PROMPT}\n\nUser: ${cleanMsg}\nYou:`;
@@ -246,6 +277,7 @@ cmd({
                 
                 const finalText = `🤖 *KHAN:* ${replyText}`;
                 
+                // EDIT the thinking message (keeps it as quoted reply to original)
                 const protocolMsg = {
                     key: thinkingMsg.key,
                     type: 0xe,
@@ -289,10 +321,7 @@ cmd({
 
 💡 *Just say "${matchedText}" to see all options*`;
 
-            await client.sendMessage(from, { 
-                text: helpText,
-                quoted: message
-            });
+            await sendQuoted(helpText);
         }
         
     } catch (error) {
