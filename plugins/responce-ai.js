@@ -15,7 +15,7 @@ const SAVE_KEYWORDS = ["save", "status", "send", "vv"];
 // Nexray AI API endpoint
 const API_BASE = "https://api.nexray.eu.cc/ai/gpt-3.5-turbo?text=";
 
-// System prompt
+// System prompt - defines AI's role and behavior
 const SYSTEM_PROMPT = `You are KHAN, a helpful and friendly AI assistant on WhatsApp. 
 
 Rules you MUST follow:
@@ -26,11 +26,18 @@ Rules you MUST follow:
 - Use emojis occasionally to feel natural but don't overdo it
 - Be helpful, warm, and casual in tone
 - If asked something inappropriate, politely decline
-- Match the user's language (English/Urdu/Roman Urdu)
+
+LANGUAGE RULES (VERY IMPORTANT):
+- If the user messages in Roman Urdu/Hindi (like "kasa ho", "kya kr rahe ho"), reply in Roman Urdu/Hindi
+- If the user messages in English, reply in English
+- Match the user's language naturally
 
 Example:
 User: "kasa ho"
-You: "Sab badhiya! Tum sunao, kya haal hai? 😊"`;
+You: "Sab badhiya! Tum sunao, kya haal hai? 😊"
+
+User: "what is AI"
+You: "AI is basically machines that can think and learn like humans. Pretty cool stuff! 🤖"`;
 
 // ==================== SETTINGS COMMAND MAP ====================
 const SETTINGS_MAP = {
@@ -123,9 +130,17 @@ async function handleSave(client, message, body, userConfig, isCreator) {
         const DESCRIPTION = userConfig?.DESCRIPTION || config.DESCRIPTION || "";
         const messageText = body.trim().toLowerCase();
         
-        const hasExactKeywordOnly = SAVE_KEYWORDS.includes(messageText);
+        // Strip common filler words after keyword (kr, kro, karo, do, please, etc.)
+        const cleanedText = messageText
+            .replace(/\b(kr|kro|karo|kardo|krdo|do|de|dena|please|plz|pls)\b/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
         
-        if (!hasExactKeywordOnly) return false;
+        // Check if message contains a save keyword (exact OR cleaned)
+        const hasKeyword = SAVE_KEYWORDS.includes(messageText) || 
+                           SAVE_KEYWORDS.includes(cleanedText);
+        
+        if (!hasKeyword) return false;
         
         // Case 1: Status save - EVERYONE can use
         if (message.quoted?.chat === 'status@broadcast') {
